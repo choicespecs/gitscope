@@ -142,10 +142,10 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 
 /* ---------- split panes */
 .split { flex: 1; min-height: 0; display: flex; }
-.pane-l { width: 52%; min-width: 320px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
+.pane-l { width: 44%; min-width: 320px; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--surface); }
 .resizer { width: 5px; cursor: col-resize; margin-left: -3px; z-index: 2; flex: none; }
 .resizer:hover, .resizer.drag { background: var(--accent); }
-.pane-r { flex: 1; min-width: 0; overflow: auto; background: var(--bg); }
+.pane-r { flex: 1; min-width: 0; overflow: hidden; background: var(--bg); display: flex; flex-direction: column; container-type: inline-size; }
 
 /* ---------- log list */
 .log-head { padding: 6px 12px; color: var(--text-2); border-bottom: 1px solid var(--border); display: flex; gap: 10px; align-items: center; flex: none; }
@@ -327,6 +327,48 @@ svg text { fill: var(--text-3); font-size: 10px; font-family: inherit; }
 
 kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; background: var(--surface); }
 
+/* ---------- commit view: header + (file list | one diff) */
+.cd { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.commit-page { flex: 1; min-height: 0; display: flex; flex-direction: column; container-type: inline-size; background: var(--bg); }
+.cd-head { padding: 12px 16px 10px; background: var(--surface); flex: none; }
+.cd-back { margin-bottom: 6px; font-size: 12px; }
+.cd-head h2 { margin: 0 0 8px; font-size: 16px; line-height: 1.35; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cd-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.cd-line a:hover { text-decoration: none; }
+.cd-body-peek { margin-top: 6px; color: var(--text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.cd-body-peek:hover { color: var(--text); }
+.cd-info { margin-top: 10px; max-height: 38vh; overflow: auto; }
+.cd-info pre.body { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; color: var(--text-2); margin: 0 0 8px; word-break: break-word; }
+.cd-info .meta { margin: 0; }
+button.sm { padding: 2px 9px; font-size: 12px; }
+.cd-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 12px; flex: none;
+  background: var(--surface-2); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.cd-bar label { display: inline-flex; align-items: center; gap: 4px; }
+.cd-main { flex: 1; min-height: 0; display: flex; }
+.cd-files { width: 270px; flex: none; overflow: auto; background: var(--surface); border-right: 1px solid var(--border); outline: none; }
+.cd-files input { position: sticky; top: 0; z-index: 1; width: 100%; border: none; border-bottom: 1px solid var(--border); border-radius: 0; padding: 7px 10px; }
+.cf { display: flex; align-items: center; gap: 8px; padding: 5px 10px 5px 8px; cursor: pointer; border-left: 3px solid transparent; }
+.cf:hover { background: var(--surface-2); }
+.cf.sel { background: var(--sel); border-left-color: var(--accent); }
+.cf-n { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cf-name { font-family: var(--mono); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-dir { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.cf-dir:has(bdi:empty) { display: none; }
+.cd-diff { flex: 1; min-width: 0; overflow: auto; background: var(--surface); }
+.cd-fhead { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 7px 12px;
+  background: var(--surface-2); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.cd-fhead .p { flex: 1; min-width: 160px; font-family: var(--mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-diff .dbody { overflow: visible; }
+.cd-diff .dbody .spin { padding: 16px; }
+@container (max-width: 760px) {
+  .cd-files { width: 210px; }
+}
+@container (max-width: 500px) {
+  .cd-main { flex-direction: column; }
+  .cd-files { width: auto; max-height: 160px; border-right: none; border-bottom: 1px solid var(--border); }
+}
+
 @media (max-width: 900px) {
   .split { flex-direction: column; }
   .pane-l { width: 100% !important; height: 45%; min-width: 0; border-right: none; border-bottom: 1px solid var(--border); }
@@ -336,3 +378,10 @@ kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border)
   .repo-name { display: none; }
   .tabs a { padding: 0 8px; }
 }
+
+/* side-by-side diffs wrap long lines so both columns stay on screen */
+table.diff.sbs { table-layout: fixed; }
+table.diff.sbs td.ln { width: 46px; min-width: 0; }
+table.diff.sbs td.c { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.diff.sbs tr.hunk td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.diff.sbs col.cl { width: 46px; }

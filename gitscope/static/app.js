@@ -177,9 +177,9 @@
       S.ref = r.params.ref || "--all";
       $("#refSelect").value = S.ref;
     }
-    $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === r.view));
+    $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === (r.view === "commit" ? "history" : r.view)));
     document.title = `${S.repo.name} · ${r.view} · GitScope`;
-    const views = { history: renderHistory, files: renderFiles, authors: renderAuthors, activity: renderActivity };
+    const views = { history: renderHistory, commit: renderCommitPage, files: renderFiles, authors: renderAuthors, activity: renderActivity };
     (views[r.view] || renderHistory)(r.params);
   }
   window.addEventListener("hashchange", route);
@@ -401,7 +401,7 @@
     const filterSig = JSON.stringify([S.ref, ...FILTER_KEYS.map((k) => params[k] || "")]);
     if (H && H.sig === filterSig && H.repo === S.repoId && $("#logList")) {
       // only the selection changed
-      if (params.sha !== H.selected) selectCommit(params.sha, false);
+      if (params.sha !== H.selected) selectCommit(params.sha, false, params.file);
       return;
     }
     H = { sig: filterSig, repo: S.repoId, params, commits: [], skip: 0, more: true, loading: false,
@@ -447,7 +447,7 @@
     });
     list.addEventListener("click", (e) => {
       const row = e.target.closest(".row");
-      if (row) go("history", Object.assign({}, H.params, { sha: row.dataset.sha }), true), selectCommit(row.dataset.sha, false);
+      if (row) go("history", Object.assign({}, H.params, { file: "", sha: row.dataset.sha }), true), selectCommit(row.dataset.sha, false);
     });
     list.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp" && e.key !== "j" && e.key !== "k") return;
@@ -456,7 +456,7 @@
     });
     loadMore(true).then(() => {
       if (restoreScroll) { list.scrollTop = restoreScroll; restoreScroll = 0; }
-      if (params.sha) selectCommit(params.sha, true);
+      if (params.sha) selectCommit(params.sha, true, params.file);
       else if (H.shaHit) selectCommit(H.shaHit, true);
     });
   }
@@ -467,7 +467,7 @@
     i = Math.max(0, Math.min(rows.length - 1, i + d));
     if (!rows[i]) return;
     const sha = rows[i].dataset.sha;
-    go("history", Object.assign({}, H.params, { sha }), true);
+    go("history", Object.assign({}, H.params, { file: "", sha }), true);
     selectCommit(sha, true);
     if (i > rows.length - 20) loadMore();
   }
@@ -546,23 +546,41 @@
   }
 
   // ------------------------------------------------------------------ commit detail
+  // Layout: compact header on top; below it a file list (left) and ONE diff (right),
+  // each scrolling independently, so long change lists never push diffs off-screen.
   let detailToken = 0;
-  async function selectCommit(sha, scroll) {
+  async function selectCommit(sha, scroll, file) {
     if (!sha || !H) return;
     H.selected = sha;
     const list = $("#logList");
     $$(".row.sel", list).forEach((r) => r.classList.remove("sel"));
     const row = $(`.row[data-sha^="${CSS.escape(sha)}"]`, list);
     if (row) { row.classList.add("sel"); if (scroll) row.scrollIntoView({ block: "nearest" }); }
-    const det = $("#detail");
+    showCommit($("#detail"), sha, {
+      file,
+      onFile: (path) => go("history", Object.assign({}, H.params, { file: "", sha, file: path }), true),
+    });
+  }
+
+  // Full-window commit page: #/r/<id>/commit?sha=…&file=…  (opens nicely in its own browser tab)
+  function renderCommitPage(params) {
+    $$("#tabs a").forEach((a) => a.classList.toggle("active", a.dataset.view === "history"));
+    H = null;
+    $("#app").innerHTML = `<div class="commit-page" id="detail"></div>`;
+    if (!params.sha) { $("#detail").innerHTML = `<div class="empty">No commit given.</div>`; return; }
+    showCommit($("#detail"), params.sha, {
+      file: params.file, standalone: true,
+      onFile: (path) => go("commit", { sha: params.sha, file: path }, true),
+    });
+  }
+
+  async function showCommit(det, sha, opts) {
     const token = ++detailToken;
     det.innerHTML = `<div class="spin">Loading commit…</div>`;
     try {
       const c = await api("commit", { repo: S.repoId, sha });
       if (token !== detailToken) return;
-      det.innerHTML = commitDetailHtml(c);
-      det.scrollTop = 0;
-      wireCommitDetail(det, c);
+      mountCommit(det, c, opts || {});
     } catch (e) {
       if (token === detailToken) det.innerHTML = `<div class="err">${esc(e.message)}</div>`;
     }
@@ -578,139 +596,180 @@
     if (binary) return `<span class="nums faint">binary</span>`;
     return `<span class="nums"><span class="a">+${fmtNum(add)}</span> <span class="d">−${fmtNum(del)}</span></span>`;
   }
+  function diffMode() { try { return localStorage.getItem("gs-diffmode") || "uni"; } catch (e) { return "uni"; } }
+  function splitPath(p) {
+    const i = p.lastIndexOf("/");
+    return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
+  }
 
-  function commitDetailHtml(c) {
+  function commitHeadHtml(c, opts) {
     const [subject, ...rest] = c.message.split("\n");
     const body = rest.join("\n").trim();
-    const totA = c.files.reduce((s, f) => s + (f.add || 0), 0);
-    const totD = c.files.reduce((s, f) => s + (f.del || 0), 0);
     const committerDiff = c.committer !== c.author || Math.abs(c.ctime - c.time) > 60;
     const parentLinks = c.parents.map((p) => `<a data-goto="${p}" class="mono">${short(p)}</a>`).join(", ") || '<span class="faint">none (root commit)</span>';
+    const fullHref = link("commit", { sha: c.sha });
     return `
-      <div class="detail">
-        <h2>${esc(subject)}</h2>
-        ${body ? `<pre class="body">${esc(body)}</pre>` : ""}
-        <div>${refBadges(c.refs)}</div>
-        <div class="meta">
-          <span class="k">Author</span>
-          <span class="person">${avatar(c.author, "md")}<span><b>${esc(c.author)}</b> <span class="faint">&lt;${esc(c.email)}&gt;</span><br>
-            <span class="muted">${fmtDate(c.time)}</span> <span class="faint">· ${rel(c.time)}</span></span></span>
-          ${committerDiff ? `<span class="k">Committer</span><span>${esc(c.committer)} <span class="faint">· ${fmtDate(c.ctime)}</span></span>` : ""}
-          <span class="k">Commit</span><span class="copy" data-copy="${c.sha}" title="Click to copy">${c.sha}</span>
-          <span class="k">Parent${c.parents.length > 1 ? "s" : ""}</span><span>${parentLinks}${c.parents.length > 1 ? ` <span class="faint">· diff shown against</span> <select id="baseSel">${c.parents.map((p, i) => `<option value="${p}">${i === 0 ? "first" : "parent " + (i + 1)} (${short(p)})</option>`).join("")}</select>` : ""}</span>
-          ${c.branches.length ? `<span class="k">In branches</span><span class="muted">${c.branches.slice(0, 8).map(esc).join(", ")}${c.branches.length > 8 ? ` +${c.branches.length - 8} more` : ""}</span>` : ""}
-          ${c.firstTag ? `<span class="k">First release</span><span><span class="ref tag">🏷 ${esc(c.firstTag)}</span></span>` : ""}
-        </div>
-        <div class="actions">
-          <a class="btn" href="${link("files", { ref: c.sha })}"><button type="button">Browse files at this commit</button></a>
-          <a href="${link("history", { author: "^" + reEscape(c.author) + "$" })}"><button type="button">More by ${esc(c.author)}</button></a>
-        </div>
-        <div class="file-summary">
-          <b>${c.files.length} file${c.files.length === 1 ? "" : "s"} changed</b>
-          ${nums(totA, totD)} ${bar5(totA, totD)}
+      <div class="cd-head">
+        ${opts.standalone ? `<div class="cd-back"><a href="${link("history", { sha: c.sha })}">← Back to history</a></div>` : ""}
+        <h2>${refBadges(c.refs)}${esc(subject)}</h2>
+        <div class="cd-line">
+          ${avatar(c.author)}<b>${esc(c.author)}</b>
+          <span class="faint" title="${fmtDate(c.time)}">committed ${rel(c.time)} · ${fmtDate(c.time)}</span>
+          <span class="copy faint" data-copy="${c.sha}" title="Copy full SHA">${short(c.sha)} ⧉</span>
           <span class="grow"></span>
-          <span class="diff-tools">
-            <span class="seg" id="modeSeg"><button type="button" data-mode="uni">Unified</button><button type="button" data-mode="split">Split</button></span>
-            <label class="faint"><input type="checkbox" id="wsChk"> Ignore whitespace</label>
-            <button type="button" id="expandAll">Expand all</button>
-            <button type="button" id="collapseAll">Collapse all</button>
-          </span>
+          <button type="button" class="sm" id="infoBtn" aria-expanded="false">Details ▾</button>
+          <a href="${link("files", { ref: c.sha })}"><button type="button" class="sm">Browse files</button></a>
+          ${opts.standalone ? "" : `<a href="${fullHref}" target="_blank" rel="noopener" title="Open this commit full-screen in a new browser tab"><button type="button" class="sm">Open full view ↗</button></a>`}
         </div>
-        <div class="file-list">${c.files.map((f, i) => `
-          <div data-jump="${i}" title="${esc(f.old ? f.old + " → " + f.path : f.path)}">
-            <span class="st ${f.status}">${f.status}</span>
-            <span class="fp"><bdi>${f.old ? `${esc(f.old)} → ` : ""}${esc(f.path)}</bdi></span>
-            ${nums(f.add, f.del, f.binary)} ${bar5(f.add, f.del)}
-          </div>`).join("")}</div>
-        <div id="diffs">${c.files.map((f, i) => `
-          <section class="fdiff collapsed" data-i="${i}" id="fd${i}">
-            <header><span class="caret">▸</span><span class="st ${f.status}">${f.status}</span>
-              <span class="p" title="${esc(f.path)}">${f.old ? `${esc(f.old)} → ` : ""}${esc(f.path)}</span>
-              ${nums(f.add, f.del, f.binary)}
-              <a data-file="${esc(f.path)}" data-status="${f.status}" title="View file at this commit">view</a>
-              <a data-fh="${esc(f.path)}" title="Full history of this file">history</a>
-            </header>
-            <div class="dbody"></div>
-          </section>`).join("")}</div>
+        <div class="cd-info" id="cdInfo" hidden>
+          ${body ? `<pre class="body">${esc(body)}</pre>` : ""}
+          <div class="meta">
+            <span class="k">Author</span><span>${esc(c.author)} <span class="faint">&lt;${esc(c.email)}&gt; · ${fmtDate(c.time)}</span></span>
+            ${committerDiff ? `<span class="k">Committer</span><span>${esc(c.committer)} <span class="faint">· ${fmtDate(c.ctime)}</span></span>` : ""}
+            <span class="k">Commit</span><span class="copy" data-copy="${c.sha}" title="Click to copy">${c.sha}</span>
+            <span class="k">Parent${c.parents.length > 1 ? "s" : ""}</span><span>${parentLinks}</span>
+            ${c.branches.length ? `<span class="k">In branches</span><span class="muted">${c.branches.slice(0, 8).map(esc).join(", ")}${c.branches.length > 8 ? ` +${c.branches.length - 8} more` : ""}</span>` : ""}
+            ${c.firstTag ? `<span class="k">First release</span><span><span class="ref tag">🏷 ${esc(c.firstTag)}</span></span>` : ""}
+            <span class="k">Author's work</span><span><a href="${link("history", { author: "^" + reEscape(c.author) + "$" })}">All commits by ${esc(c.author)} →</a></span>
+          </div>
+        </div>
+        ${body ? `<div class="cd-body-peek" id="bodyPeek" title="Click for full message">${esc(body.split("\n").filter(Boolean).slice(0, 2).join(" · "))}</div>` : ""}
       </div>`;
   }
 
-  function diffMode() { try { return localStorage.getItem("gs-diffmode") || "uni"; } catch (e) { return "uni"; } }
-
-  function wireCommitDetail(det, c) {
+  function mountCommit(det, c, opts) {
+    const totA = c.files.reduce((s, f) => s + (f.add || 0), 0);
+    const totD = c.files.reduce((s, f) => s + (f.del || 0), 0);
     let base = c.parents[0] || "";
-    const loaded = new Map();
-    const setMode = (m) => {
-      try { localStorage.setItem("gs-diffmode", m); } catch (e) {}
-      $$("#modeSeg button", det).forEach((b) => b.classList.toggle("on", b.dataset.mode === m));
-      loaded.forEach((patch, i) => { $(`#fd${i} .dbody`, det).innerHTML = renderPatch(patch, m); });
-    };
-    setMode(diffMode());
-    const ws = () => ($("#wsChk", det).checked ? "1" : "");
-    async function load(i, open) {
-      const sec = $(`#fd${i}`, det);
-      if (open === undefined) open = sec.classList.contains("collapsed");
-      sec.classList.toggle("collapsed", !open);
-      $(".caret", sec).textContent = open ? "▾" : "▸";
-      if (!open || loaded.has(i)) return;
-      const f = c.files[i];
-      const body = $(".dbody", sec);
-      body.innerHTML = `<div class="spin">Loading diff…</div>`;
+    let cur = c.files.findIndex((f) => f.path === opts.file);
+    if (cur < 0) cur = Math.max(0, c.files.findIndex((f) => f.binary || (f.add || 0) + (f.del || 0) > 0));
+    const cache = new Map();
+    const N = c.files.length;
+    det.innerHTML = `
+      <div class="cd">
+        ${commitHeadHtml(c, opts)}
+        <div class="cd-bar">
+          <b>${N} file${N === 1 ? "" : "s"} changed</b> ${nums(totA, totD)} ${bar5(totA, totD)}
+          ${c.parents.length > 1 ? `<label class="faint">vs <select id="baseSel">${c.parents.map((p, i) => `<option value="${p}">${i === 0 ? "first parent" : "parent " + (i + 1)} (${short(p)})</option>`).join("")}</select></label>` : ""}
+          <span class="grow"></span>
+          <span class="seg" id="modeSeg"><button type="button" class="sm" data-mode="uni">Unified</button><button type="button" class="sm" data-mode="split">Split</button></span>
+          <label class="faint" title="Ignore whitespace changes"><input type="checkbox" id="wsChk"> No whitespace</label>
+          <span class="seg"><button type="button" class="sm" id="prevF" title="Previous file  [">‹</button><button type="button" class="sm" id="nextF" title="Next file  ]">›</button></span>
+          <span class="faint" id="fpos"></span>
+        </div>
+        ${N ? `<div class="cd-main">
+          <nav class="cd-files" id="cdFiles" tabindex="0">
+            ${N > 8 ? `<input type="search" id="fFilter" placeholder="Filter ${N} files…">` : ""}
+            <div id="fItems">${c.files.map((f, i) => {
+              const [dir, name] = splitPath(f.path);
+              return `<div class="cf" data-i="${i}" title="${esc(f.old ? f.old + " → " + f.path : f.path)}">
+                <span class="st ${f.status}">${f.status}</span>
+                <span class="cf-n"><span class="cf-name">${esc(name)}</span><span class="cf-dir"><bdi>${esc(f.old ? "from " + f.old : dir)}</bdi></span></span>
+                ${nums(f.add, f.del, f.binary)}
+              </div>`;
+            }).join("")}</div>
+          </nav>
+          <div class="cd-diff" id="cdDiff"></div>
+        </div>` : `<div class="empty">This commit doesn't change any files.</div>`}
+      </div>`;
+
+    const setModeBtns = () => $$("#modeSeg button", det).forEach((b) => b.classList.toggle("on", b.dataset.mode === diffMode()));
+    setModeBtns();
+
+    async function show(i, focusList) {
+      if (!N) return;
+      cur = (i + N) % N;
+      const f = c.files[cur];
+      $$(".cf", det).forEach((el) => el.classList.toggle("sel", +el.dataset.i === cur));
+      const item = $(`.cf[data-i="${cur}"]`, det);
+      if (item) item.scrollIntoView({ block: "nearest" });
+      if (focusList) $("#cdFiles", det).focus();
+      $("#fpos", det).textContent = `${cur + 1} / ${N}`;
+      if (opts.onFile) opts.onFile(f.path);
+      const pane = $("#cdDiff", det);
+      pane.innerHTML = `
+        <div class="cd-fhead">
+          <span class="st ${f.status}">${f.status}</span>
+          <span class="p" title="${esc(f.path)}">${f.old ? `<span class="faint">${esc(f.old)} →</span> ` : ""}${esc(f.path)}</span>
+          ${nums(f.add, f.del, f.binary)}
+          <a data-file="${esc(f.path)}" data-status="${f.status}" title="View the whole file at this commit">view file</a>
+          <a data-fh="${esc(f.path)}" title="Every commit that touched this file">file history</a>
+          <a data-blame="${esc(f.path)}" data-status="${f.status}" title="Who wrote each line">blame</a>
+        </div>
+        <div class="dbody"><div class="spin">Loading diff…</div></div>`;
+      pane.scrollTop = 0;
+      const ws = $("#wsChk", det).checked ? "1" : "";
+      const key = `${base}|${ws}|${cur}`;
       try {
-        const res = await api("diff", { repo: S.repoId, sha: c.sha, parent: base, path: f.path, old: f.old, ws: ws() });
-        loaded.set(i, res.patch + (res.truncated ? "\n\\ GitScope: diff truncated (too large)" : ""));
-        body.innerHTML = renderPatch(loaded.get(i), diffMode());
-      } catch (e) { body.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+        if (!cache.has(key)) {
+          const res = await api("diff", { repo: S.repoId, sha: c.sha, parent: base, path: f.path, old: f.old, ws });
+          cache.set(key, res.patch + (res.truncated ? "\n\\ GitScope: diff truncated (too large)" : ""));
+        }
+        if (cur !== c.files.indexOf(f)) return; // user moved on
+        $(".dbody", pane).innerHTML = renderPatch(cache.get(key), diffMode());
+      } catch (e) { $(".dbody", pane).innerHTML = `<div class="err">${esc(e.message)}</div>`; }
     }
-    // auto-expand while the total stays manageable
-    let budget = 2500;
-    c.files.forEach((f, i) => {
-      const n = (f.add || 0) + (f.del || 0);
-      if (i < 40 && n <= budget && !(f.status === "D" && n > 200)) { budget -= n; load(i, true); }
-    });
+    det._showFile = show; det._cur = () => cur;
+
     det.onclick = (e) => {
       const t = e.target;
       if (t.closest("[data-copy]")) return copy(t.closest("[data-copy]").dataset.copy);
       const gt = t.closest("[data-goto]");
-      if (gt) { go("history", Object.assign({}, H.params, { sha: gt.dataset.goto })); return; }
+      if (gt) return opts.standalone ? go("commit", { sha: gt.dataset.goto }) : go("history", Object.assign({}, H.params, { file: "", sha: gt.dataset.goto, file: "" }));
       const fl = t.closest("[data-file]");
-      if (fl) {
-        const deleted = fl.dataset.status === "D";
-        go("files", { ref: deleted ? c.parents[0] : c.sha, path: fl.dataset.file, mode: "source" });
-        return;
-      }
+      if (fl) return go("files", { ref: fl.dataset.status === "D" ? c.parents[0] : c.sha, path: fl.dataset.file, mode: "source" });
+      const bl = t.closest("[data-blame]");
+      if (bl) return go("files", { ref: bl.dataset.status === "D" ? c.parents[0] : c.sha, path: bl.dataset.blame, mode: "blame" });
       const fh = t.closest("[data-fh]");
-      if (fh) { go("files", { ref: S.ref === "--all" ? "" : S.ref, path: fh.dataset.fh, mode: "history" }); return; }
-      const jump = t.closest("[data-jump]");
-      if (jump) {
-        const i = +jump.dataset.jump;
-        load(i, true);
-        $(`#fd${i}`, det).scrollIntoView({ block: "start" });
-        return;
-      }
-      const head = t.closest(".fdiff > header");
-      if (head) return load(+head.parentElement.dataset.i);
+      if (fh) return go("files", { ref: S.ref === "--all" ? "" : S.ref, path: fh.dataset.fh, mode: "history" });
+      const cf = t.closest(".cf");
+      if (cf) return show(+cf.dataset.i);
       const mb = t.closest("[data-mode]");
-      if (mb) return setMode(mb.dataset.mode);
-      if (t.id === "expandAll") c.files.forEach((_, i) => load(i, true));
-      if (t.id === "collapseAll") $$(".fdiff", det).forEach((s) => { s.classList.add("collapsed"); $(".caret", s).textContent = "▸"; });
+      if (mb) {
+        try { localStorage.setItem("gs-diffmode", mb.dataset.mode); } catch (err) {}
+        setModeBtns(); return show(cur);
+      }
+      if (t.closest("#prevF")) return show(cur - 1);
+      if (t.closest("#nextF")) return show(cur + 1);
+      if (t.closest("#infoBtn") || t.closest("#bodyPeek")) {
+        const info = $("#cdInfo", det), btn = $("#infoBtn", det), peek = $("#bodyPeek", det);
+        info.hidden = !info.hidden;
+        btn.textContent = info.hidden ? "Details ▾" : "Details ▴";
+        btn.setAttribute("aria-expanded", String(!info.hidden));
+        if (peek) peek.hidden = !info.hidden;
+      }
     };
-    const reloadAll = () => {
-      const open = [...loaded.keys()].filter((i) => !$(`#fd${i}`, det).classList.contains("collapsed"));
-      loaded.clear();
-      $$(".fdiff .dbody", det).forEach((b) => (b.innerHTML = ""));
-      open.forEach((i) => load(i, true));
+    const list = $("#cdFiles", det);
+    if (list) list.addEventListener("keydown", (e) => {
+      if (e.target.tagName === "INPUT") return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); show(cur + (e.key === "ArrowDown" ? 1 : -1), true); }
+    });
+    const ff = $("#fFilter", det);
+    if (ff) ff.oninput = () => {
+      const q = ff.value.toLowerCase();
+      $$(".cf", det).forEach((el) => (el.hidden = q && !c.files[+el.dataset.i].path.toLowerCase().includes(q)));
     };
-    $("#wsChk", det).onchange = reloadAll;
+    $("#wsChk", det).onchange = () => { cache.clear(); show(cur); };
     const bs = $("#baseSel", det);
     if (bs) bs.onchange = async () => {
       base = bs.value;
       const nc = await api("commit", { repo: S.repoId, sha: c.sha, parent: base });
-      det.innerHTML = commitDetailHtml(nc);
+      const keepFile = c.files[cur] && c.files[cur].path;
+      mountCommit(det, Object.assign(nc, { parents: c.parents }), Object.assign({}, opts, { file: keepFile }));
       $("#baseSel", det).value = base;
-      wireCommitDetail(det, Object.assign(nc, { parents: c.parents }));
     };
+    show(cur);
   }
+
+  // [ and ] step through the files of the open commit from anywhere on the page
+  document.addEventListener("keydown", (e) => {
+    if ((e.key !== "[" && e.key !== "]") || e.metaKey || e.ctrlKey) return;
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    const det = $("#detail");
+    if (!det || !det._showFile) return;
+    e.preventDefault();
+    det._showFile(det._cur() + (e.key === "]" ? 1 : -1));
+  });
 
   // ------------------------------------------------------------------ diff rendering
   function parsePatch(patch) {
@@ -795,7 +854,7 @@
           }
         }
       }
-      return html + `<table class="diff sbs">${rows.join("")}</table>`;
+      return html + `<table class="diff sbs"><colgroup><col class="cl"><col><col class="cl"><col></colgroup>${rows.join("")}</table>`;
     }
     for (const h of P.hunks) {
       rows.push(`<tr class="hunk"><td colspan="3">${esc(h.header)}</td></tr>`);
