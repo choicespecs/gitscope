@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GitScope</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/" title="Home">
+    <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="6" cy="6" r="2.6"/><circle cx="6" cy="18" r="2.6"/><circle cx="18" cy="11" r="2.6"/><path d="M6 8.6v6.8M8.4 7.2c4 1 7 1.4 7.4 2.4"/></svg>
+    <span>GitScope</span>
+  </a>
+  <div class="repo-ctx" id="repoCtx" hidden>
+    <span class="repo-name" id="repoName"></span>
+    <nav class="tabs" id="tabs">
+      <a data-view="history">History</a>
+      <a data-view="files">Files</a>
+      <a data-view="authors">Authors</a>
+      <a data-view="activity">Activity</a>
+    </nav>
+  </div>
+  <div class="top-right">
+    <select id="refSelect" title="Branch / tag to view" hidden></select>
+    <button class="icon-btn" id="refreshBtn" title="Reload (and fetch, for cloned repos)" hidden>⟳</button>
+    <button class="icon-btn" id="themeBtn" title="Toggle theme">◐</button>
+  </div>
+</header>
+<main id="app"></main>
+<div id="tip" class="tip" hidden></div>
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
