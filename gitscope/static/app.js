@@ -421,7 +421,7 @@
       </form>
       <div class="split">
         <div class="pane-l" id="paneL">
-          <div class="log-head"><span id="logCount">Loading…</span><span class="grow"></span><span class="faint"><kbd>j</kbd>/<kbd>k</kbd> navigate · <kbd>t</kbd> find file</span></div>
+          <div class="log-head"><span id="logCount">Loading…</span><span class="grow"></span><span class="faint"><kbd>j</kbd>/<kbd>k</kbd> commits · <kbd>[</kbd>/<kbd>]</kbd> files · <kbd>f</kbd> full view · <kbd>t</kbd> find file</span></div>
           <div class="log-list" id="logList" tabindex="0"></div>
         </div>
         <div class="resizer" id="resizer"></div>
@@ -429,6 +429,7 @@
       </div>`;
     try { const w = localStorage.getItem("gs-split"); if (w) $("#paneL").style.width = w; } catch (e) {}
     setupResizer();
+    if (params.full) $(".split").classList.add("full");
     loadStats().then((st) => {
       $("#authorList").innerHTML = st.authors.slice(0, 300).map((a) => `<option value="${esc(a.name)}">${a.commits} commits</option>`).join("");
     }).catch(() => {});
@@ -467,7 +468,7 @@
     i = Math.max(0, Math.min(rows.length - 1, i + d));
     if (!rows[i]) return;
     const sha = rows[i].dataset.sha;
-    go("history", Object.assign({}, H.params, { file: "", sha }), true);
+    go("history", Object.assign({}, parseHash().params, { file: "", sha }), true);
     selectCommit(sha, true);
     if (i > rows.length - 20) loadMore();
   }
@@ -558,7 +559,7 @@
     if (row) { row.classList.add("sel"); if (scroll) row.scrollIntoView({ block: "nearest" }); }
     showCommit($("#detail"), sha, {
       file,
-      onFile: (path) => go("history", Object.assign({}, H.params, { file: "", sha, file: path }), true),
+      onFile: (path) => go("history", Object.assign({}, parseHash().params, { sha, file: path }), true),
     });
   }
 
@@ -607,7 +608,6 @@
     const body = rest.join("\n").trim();
     const committerDiff = c.committer !== c.author || Math.abs(c.ctime - c.time) > 60;
     const parentLinks = c.parents.map((p) => `<a data-goto="${p}" class="mono">${short(p)}</a>`).join(", ") || '<span class="faint">none (root commit)</span>';
-    const fullHref = link("commit", { sha: c.sha });
     return `
       <div class="cd-head">
         ${opts.standalone ? `<div class="cd-back"><a href="${link("history", { sha: c.sha })}">← Back to history</a></div>` : ""}
@@ -619,7 +619,7 @@
           <span class="grow"></span>
           <button type="button" class="sm" id="infoBtn" aria-expanded="false">Details ▾</button>
           <a href="${link("files", { ref: c.sha })}"><button type="button" class="sm">Browse files</button></a>
-          ${opts.standalone ? "" : `<a href="${fullHref}" target="_blank" rel="noopener" title="Open this commit full-screen in a new browser tab"><button type="button" class="sm">Open full view ↗</button></a>`}
+          ${opts.standalone ? "" : `<button type="button" class="sm" id="fullBtn" title="Hide the commit list so the diff uses the whole window (f · Esc to exit)">${isFull() ? "Exit full view ⤡" : "Full view ⤢"}</button>`}
         </div>
         <div class="cd-info" id="cdInfo" hidden>
           ${body ? `<pre class="body">${esc(body)}</pre>` : ""}
@@ -729,6 +729,7 @@
         try { localStorage.setItem("gs-diffmode", mb.dataset.mode); } catch (err) {}
         setModeBtns(); return show(cur);
       }
+      if (t.closest("#fullBtn")) return toggleFull();
       if (t.closest("#prevF")) return show(cur - 1);
       if (t.closest("#nextF")) return show(cur + 1);
       if (t.closest("#infoBtn") || t.closest("#bodyPeek")) {
@@ -760,6 +761,27 @@
     };
     show(cur);
   }
+
+  // In-page "full view": hide the commit list so the selected commit uses the whole window.
+  function isFull() { const s = $(".split"); return !!(s && s.classList.contains("full")); }
+  function toggleFull(on) {
+    const split = $(".split");
+    if (!split) return;
+    on = on === undefined ? !split.classList.contains("full") : on;
+    split.classList.toggle("full", on);
+    const b = $("#fullBtn");
+    if (b) b.textContent = on ? "Exit full view ⤡" : "Full view ⤢";
+    go("history", Object.assign({}, parseHash().params, { full: on ? "1" : "" }), true);
+    if (!on) { const sel = $("#logList .row.sel"); if (sel) sel.scrollIntoView({ block: "nearest" }); }
+  }
+  document.addEventListener("keydown", (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || !$(".split")) return;
+    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) || $(".finder-bg")) return;
+    if (e.key === "f") { e.preventDefault(); toggleFull(); }
+    else if (e.key === "Escape" && isFull()) { e.preventDefault(); toggleFull(false); }
+    // in full view the list is hidden, so j/k still step through commits
+    else if ((e.key === "j" || e.key === "k") && isFull() && H) { e.preventDefault(); moveSel(e.key === "j" ? 1 : -1); }
+  });
 
   // [ and ] step through the files of the open commit from anywhere on the page
   document.addEventListener("keydown", (e) => {

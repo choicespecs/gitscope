@@ -385,3 +385,6 @@ table.diff.sbs td.ln { width: 46px; min-width: 0; }
 table.diff.sbs td.c { white-space: pre-wrap; overflow-wrap: anywhere; }
 table.diff.sbs tr.hunk td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 table.diff.sbs col.cl { width: 46px; }
+
+/* in-page full view: commit list hidden, commit detail takes the whole width */
+.split.full > .pane-l, .split.full > .resizer { display: none; }
