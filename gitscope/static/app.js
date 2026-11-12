@@ -162,6 +162,8 @@
         S.repoId = r.repo; S.repo = info; S.stats = null; S.statsPromise = null; S.authorSlot = {};
         S.refs = await api("refs", { repo: r.repo });
         S.ref = "--all";
+        S.state = (await api("state", { repo: r.repo })).state;
+        S.pendingState = null;
       } catch (e) {
         S.repoId = null;
         app.innerHTML = `<div class="err">${esc(e.message)}</div><div class="empty"><a href="#/">← Back home</a></div>`;
@@ -210,10 +212,8 @@
       rb.disabled = true; toast("Reloading…");
       try {
         await post("refresh", { repo: S.repoId });
-        S.refs = await api("refs", { repo: S.repoId });
-        S.stats = null; S.statsPromise = null;
-        setupRepoChrome(); loadStats().catch(() => {});
-        route(); toast("Up to date");
+        await reloadRepo();
+        toast("Up to date");
       } catch (e) { toast(e.message); }
       rb.disabled = false;
     };
@@ -455,6 +455,7 @@
       moveSel(e.key === "ArrowDown" || e.key === "j" ? 1 : -1);
     });
     loadMore(true).then(() => {
+      if (restoreScroll) { list.scrollTop = restoreScroll; restoreScroll = 0; }
       if (params.sha) selectCommit(params.sha, true);
       else if (H.shaHit) selectCommit(H.shaHit, true);
     });
@@ -1380,6 +1381,59 @@
       svg.onmouseleave = () => tip.hide();
     } catch (e) { el.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   }
+
+  // ------------------------------------------------------------------ auto-refresh
+  // Polls a cheap fingerprint of the repo's refs. When you commit, pull, fetch,
+  // checkout or switch branches in a terminal, the open view reloads itself.
+  // Purely local: it only re-reads the repository on disk.
+  let restoreScroll = 0;
+  const POLL_MS = 3000;
+
+  async function reloadRepo() {
+    const rid = S.repoId;
+    const refs = await api("refs", { repo: rid });
+    const st = (await api("state", { repo: rid })).state;
+    if (rid !== S.repoId) return;
+    S.refs = refs; S.state = st; S.pendingState = null;
+    const exists = S.ref === "--all" || S.ref === "HEAD" ||
+      [...refs.branches, ...refs.remotes, ...refs.tags].some((b) => b.name === S.ref);
+    if (!exists) S.ref = "--all"; // the branch being viewed was deleted
+    S.stats = null; S.statsPromise = null;
+    setupRepoChrome();
+    loadStats().catch(() => {});
+    const list = $("#logList");
+    restoreScroll = list ? list.scrollTop : 0;
+    H = null; // force the history view to re-query instead of reusing its list
+    await route();
+  }
+
+  function userIsBusy() {
+    const ae = document.activeElement;
+    if (ae && /INPUT|SELECT|TEXTAREA/.test(ae.tagName) && $("#app").contains(ae) && ae.value) return true;
+    return !!$(".finder-bg") || !!(window.getSelection && String(window.getSelection()).length);
+  }
+
+  let polling = false;
+  async function poll() {
+    if (polling || !S.repoId || document.hidden) return;
+    polling = true;
+    try {
+      const rid = S.repoId;
+      if (!S.pendingState) {
+        const { state } = await api("state", { repo: rid });
+        if (rid === S.repoId && S.state && state !== S.state) S.pendingState = state;
+      }
+      // don't yank the page out from under someone typing a filter or selecting text
+      if (S.pendingState && !userIsBusy()) {
+        const oldHead = S.refs && S.refs.head;
+        await reloadRepo();
+        toast(S.refs.head !== oldHead ? "New commits detected · view updated" : "Branches changed · view updated");
+      }
+    } catch (e) { /* repo temporarily locked mid-pull etc.; try again next tick */ }
+    polling = false;
+  }
+  setInterval(poll, POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
 
   route();
 })();

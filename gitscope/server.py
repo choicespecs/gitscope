@@ -637,6 +637,11 @@ def api_stats(repo, q):
     return cached(key, compute, size=20)
 
 
+def api_state(repo, q):
+    """Cheap fingerprint of all refs + HEAD; the UI polls this to notice pulls/commits."""
+    return {"state": state_key(repo)}
+
+
 def api_open(body):
     info = open_repo(body.get("source"))
     clear_cache(info["id"])
@@ -700,6 +705,7 @@ def api_config(_q):
 
 GET_ROUTES = {
     "/api/refs": api_refs,
+    "/api/state": api_state,
     "/api/log": api_log,
     "/api/commit": api_commit,
     "/api/diff": api_diff,

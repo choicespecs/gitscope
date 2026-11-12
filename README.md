@@ -36,7 +36,8 @@ Every view has its own URL (`#/r/<id>/history?sha=…&author=…`), so you can b
 
 - Author identity uses `.mailmap` if the repo has one (`%aN`), and authors are grouped by name.
 - Author and activity statistics come from one `git log --numstat` pass. The result is cached until a ref moves. On very large repos (100k+ commits) the first load can take a while.
-- The ⟳ button reloads the repo from disk, for example after you `git pull` in a terminal. It never fetches.
+- **Auto-refresh.** While a tab is open, GitScope checks the repo on disk every 3 seconds. When you `git pull`, `git fetch`, commit, check out, or delete a branch in your terminal, the current view reloads on its own and keeps your selected commit and scroll position. It waits if you're typing in a filter box or selecting text, and pauses while the tab is in the background. This only re-reads files on disk, so your git credentials stay with your own git.
+- The ⟳ button forces the same reload immediately. It never fetches.
 - In partial clones (`--filter=blob:none`), content that hasn't been downloaded yet shows an error instead of being fetched.
 - The recent-repos list is saved in `~/.gitscope/recent.json`. Set `GITSCOPE_HOME` to move it.
 
