@@ -39,6 +39,7 @@ Every view has its own URL (`#/r/<id>/history?sha=…&author=…`), so you can b
 - Author identity uses `.mailmap` if the repo has one (`%aN`), and authors are grouped by name.
 - Author and activity statistics come from one `git log --numstat` pass. The result is cached until a ref moves. On very large repos (100k+ commits) the first load can take a while.
 - Cloned repos are stored bare in `~/.gitscope/clones`. The ⟳ button runs `git fetch` for them. For local repos it just reloads. Set `GITSCOPE_HOME` to move this data.
+- Partial clones (`--filter=blob:none`) are never lazily fetched from their remote. Content that isn't downloaded yet shows an error instead.
 - Private remotes use your existing git credentials (SSH keys or a credential helper). GitScope never prompts for or stores credentials.
 
 ## Layout

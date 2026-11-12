@@ -49,6 +49,7 @@ _GIT_ENV = dict(os.environ)
 _GIT_ENV.update({
     "GIT_TERMINAL_PROMPT": "0",      # never block waiting for credentials
     "GIT_OPTIONAL_LOCKS": "0",
+    "GIT_NO_LAZY_FETCH": "1",        # partial clones: never silently download missing objects
     "LC_ALL": "C",
     "GIT_PAGER": "cat",
 })
