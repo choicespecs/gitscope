@@ -401,6 +401,7 @@
     const filterSig = JSON.stringify([S.ref, ...FILTER_KEYS.map((k) => params[k] || "")]);
     if (H && H.sig === filterSig && H.repo === S.repoId && $("#logList")) {
       // only the selection changed
+      syncFull(!!params.full);
       if (params.sha !== H.selected) selectCommit(params.sha, false, params.file);
       return;
     }
@@ -610,7 +611,8 @@
     const parentLinks = c.parents.map((p) => `<a data-goto="${p}" class="mono">${short(p)}</a>`).join(", ") || '<span class="faint">none (root commit)</span>';
     return `
       <div class="cd-head">
-        ${opts.standalone ? `<div class="cd-back"><a href="${link("history", { sha: c.sha })}">← Back to history</a></div>` : ""}
+        ${opts.standalone ? `<div class="cd-back"><a href="${link("history", { sha: c.sha })}">← Back to history</a></div>`
+          : `<button type="button" class="back-btn" id="backBtn" title="Show the commit list again (Esc)">← Back to commit list <kbd>Esc</kbd></button>`}
         <h2>${refBadges(c.refs)}${esc(subject)}</h2>
         <div class="cd-line">
           ${avatar(c.author)}<b>${esc(c.author)}</b>
@@ -730,6 +732,7 @@
         setModeBtns(); return show(cur);
       }
       if (t.closest("#fullBtn")) return toggleFull();
+      if (t.closest("#backBtn")) return toggleFull(false);
       if (t.closest("#prevF")) return show(cur - 1);
       if (t.closest("#nextF")) return show(cur + 1);
       if (t.closest("#infoBtn") || t.closest("#bodyPeek")) {
@@ -764,15 +767,20 @@
 
   // In-page "full view": hide the commit list so the selected commit uses the whole window.
   function isFull() { const s = $(".split"); return !!(s && s.classList.contains("full")); }
+  function syncFull(on) {
+    const split = $(".split");
+    if (!split) return;
+    split.classList.toggle("full", on);
+    const b = $("#fullBtn");
+    if (b) b.textContent = on ? "Exit full view ⤡" : "Full view ⤢";
+    if (!on) { const sel = $("#logList .row.sel"); if (sel) sel.scrollIntoView({ block: "nearest" }); }
+  }
   function toggleFull(on) {
     const split = $(".split");
     if (!split) return;
     on = on === undefined ? !split.classList.contains("full") : on;
-    split.classList.toggle("full", on);
-    const b = $("#fullBtn");
-    if (b) b.textContent = on ? "Exit full view ⤡" : "Full view ⤢";
+    syncFull(on);
     go("history", Object.assign({}, parseHash().params, { full: on ? "1" : "" }), true);
-    if (!on) { const sel = $("#logList .row.sel"); if (sel) sel.scrollIntoView({ block: "nearest" }); }
   }
   document.addEventListener("keydown", (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey || !$(".split")) return;

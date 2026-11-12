@@ -388,3 +388,6 @@ table.diff.sbs col.cl { width: 46px; }
 
 /* in-page full view: commit list hidden, commit detail takes the whole width */
 .split.full > .pane-l, .split.full > .resizer { display: none; }
+.back-btn { display: none; margin: 0 0 8px; padding: 4px 10px; font-weight: 600; color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+.back-btn kbd { margin-left: 6px; font-weight: 400; }
+.split.full .back-btn { display: inline-flex; align-items: center; }
