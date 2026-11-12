@@ -3,22 +3,20 @@
 A local, offline web app for tracing git history: the commit graph, who changed what and when, and every diff, in your browser instead of an IDE.
 
 - **No dependencies.** Python 3.8+ standard library and your local `git`. Nothing to `pip install`.
-- **No external API calls.** The UI loads no CDNs, fonts, analytics, or avatars, and its Content-Security-Policy only allows requests back to the local server. The only network traffic possible is an explicit `git clone`/`git fetch` when *you* open a remote URL, and `--offline` turns that off too.
-- **Local only.** The server binds to `127.0.0.1` and rejects requests with a foreign `Host` header (DNS-rebinding protection). State-changing POSTs require a JSON body, so other websites can't trigger them.
+- **Entirely local.** It only opens repositories that are already on your disk. It never clones, fetches, or calls GitHub or any other API. Every git command runs with all network transports disabled (`protocol.allow=never`) and lazy fetching off. The UI loads no CDNs, fonts, analytics, or avatars, and its Content-Security-Policy only allows requests back to the local server.
+- **Private to your machine.** The server binds to `127.0.0.1` and rejects requests with a foreign `Host` header (DNS-rebinding protection). State-changing POSTs require a JSON body, so other websites can't trigger them.
 
 ## Run it
 
 ```sh
 ./gitscope.sh                      # opens http://127.0.0.1:7777 in your browser
 ./gitscope.sh ~/code/my-project    # open straight into a repo
-./gitscope.sh https://github.com/user/repo.git   # clones once (bare) into ~/.gitscope/clones
-./gitscope.sh --offline            # forbid remote URLs entirely
 ./gitscope.sh --port 9000 --no-browser
 ```
 
 Or run `python3 -m gitscope …` from the repo root.
 
-From the home screen you can type a path (press **Tab** to autocomplete folders) or paste a git URL. Recently opened repos are listed there.
+From the home screen, type a path (press **Tab** to autocomplete folders). Recently opened repos are listed there. To look at a GitHub repo, `git clone` it yourself first, then open the folder.
 
 ## What you get
 
@@ -38,9 +36,9 @@ Every view has its own URL (`#/r/<id>/history?sha=…&author=…`), so you can b
 
 - Author identity uses `.mailmap` if the repo has one (`%aN`), and authors are grouped by name.
 - Author and activity statistics come from one `git log --numstat` pass. The result is cached until a ref moves. On very large repos (100k+ commits) the first load can take a while.
-- Cloned repos are stored bare in `~/.gitscope/clones`. The ⟳ button runs `git fetch` for them. For local repos it just reloads. Set `GITSCOPE_HOME` to move this data.
-- Partial clones (`--filter=blob:none`) are never lazily fetched from their remote. Content that isn't downloaded yet shows an error instead.
-- Private remotes use your existing git credentials (SSH keys or a credential helper). GitScope never prompts for or stores credentials.
+- The ⟳ button reloads the repo from disk, for example after you `git pull` in a terminal. It never fetches.
+- In partial clones (`--filter=blob:none`), content that hasn't been downloaded yet shows an error instead of being fetched.
+- The recent-repos list is saved in `~/.gitscope/recent.json`. Set `GITSCOPE_HOME` to move it.
 
 ## Layout
 

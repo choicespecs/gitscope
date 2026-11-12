@@ -3,9 +3,9 @@
 A tiny stdlib-only HTTP server that shells out to the local `git` binary and
 exposes repository history as JSON to the single-page UI in ./static.
 
-Nothing here talks to any web API. The only network activity that can ever
-happen is an explicit `git clone` / `git fetch` when the user opens a remote
-repository URL (and that can be disabled with --offline).
+Strictly local: it only reads repositories that already exist on disk. It
+never clones, fetches, or talks to any web API. Every git call runs with all
+transports disabled and lazy fetching for partial clones turned off.
 """
 
 import hashlib
@@ -22,19 +22,17 @@ from urllib.parse import parse_qs, urlparse
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 DATA_DIR = os.path.expanduser(os.environ.get("GITSCOPE_HOME", "~/.gitscope"))
-CLONE_DIR = os.path.join(DATA_DIR, "clones")
 RECENT_FILE = os.path.join(DATA_DIR, "recent.json")
 
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 SHA_RE = re.compile(r"^[0-9a-fA-F]{4,64}$")
-REMOTE_RE = re.compile(r"^(https?://|ssh://|git://|git@)[\w.@:/~+%-]+$")
+URL_RE = re.compile(r"^(https?://|ssh://|git://|git@|file://)")
 MAX_BLOB = 2 * 1024 * 1024
 MAX_PATCH = 4 * 1024 * 1024
 
 FS, RS = "\x1f", "\x1e"
 LOG_FORMAT = FS.join(["%H", "%P", "%aN", "%aE", "%at", "%ct", "%D", "%s"]) + RS
 
-OFFLINE = False
 
 
 class ApiError(Exception):
@@ -57,7 +55,7 @@ _GIT_BASE = [
     "git",
     "-c", "core.quotepath=off",
     "-c", "color.ui=never",
-    "-c", "protocol.ext.allow=never",
+    "-c", "protocol.allow=never",    # git may not use any transport: no remote access at all
     "-c", "log.showSignature=false",
 ]
 
@@ -91,7 +89,7 @@ def git_bytes(repo, *args, timeout=60):
 # ---------------------------------------------------------------- repo registry
 
 _lock = threading.Lock()
-_repos = {}  # id -> dict(path, name, source, remote)
+_repos = {}  # id -> dict(path, name, source)
 
 
 def _load_recent():
@@ -99,6 +97,8 @@ def _load_recent():
         with open(RECENT_FILE) as f:
             data = json.load(f)
         for r in data:
+            if r.get("remote"):
+                continue  # created by the removed clone feature
             _repos[r["id"]] = r
     except (OSError, ValueError, KeyError):
         pass
@@ -117,48 +117,30 @@ def _repo_id(path):
     return hashlib.sha1(path.encode()).hexdigest()[:12]
 
 
-def _clone_target(url):
-    clean = re.sub(r"^(https?://|ssh://|git://|git@)", "", url)
-    clean = re.sub(r"\.git/?$", "", clean).strip("/")
-    slug = re.sub(r"[^\w.-]+", "_", clean)[:100]
-    return os.path.join(CLONE_DIR, slug + ".git")
-
-
 def open_repo(source):
     source = (source or "").strip()
     if not source:
-        raise ApiError("Enter a local path or a git URL")
-    remote = None
-    if REMOTE_RE.match(source):
-        if OFFLINE:
-            raise ApiError("Remote URLs are disabled (--offline). Clone it yourself and open the local path.")
-        remote = source
-        path = _clone_target(source)
-        if not os.path.isdir(path):
-            os.makedirs(CLONE_DIR, exist_ok=True)
-            # bare clone: we only read objects, so no working tree is needed
-            git(None, "clone", "--bare", "--quiet", "--", source, path, timeout=1800)
+        raise ApiError("Enter the path to a git repository on this machine")
+    if URL_RE.match(source):
+        raise ApiError("GitScope only opens repositories on this machine. "
+                       "Clone it yourself (git clone <url>) and open the local folder.")
+    path = os.path.abspath(os.path.expanduser(source))
+    if not os.path.isdir(path):
+        raise ApiError("Not a directory: %s" % path)
+    inside = git(path, "rev-parse", "--is-bare-repository", check=False).strip()
+    if inside == "":
+        raise ApiError("Not a git repository: %s" % path)
+    if inside == "false":
+        path = git(path, "rev-parse", "--show-toplevel").strip()
     else:
-        path = os.path.abspath(os.path.expanduser(source))
-        if not os.path.isdir(path):
-            raise ApiError("Not a directory: %s" % path)
-        inside = git(path, "rev-parse", "--is-bare-repository", check=False).strip()
-        if inside == "":
-            raise ApiError("Not a git repository: %s" % path)
-        if inside == "false":
-            path = git(path, "rev-parse", "--show-toplevel").strip()
-        else:
-            path = git(path, "rev-parse", "--absolute-git-dir").strip()
+        path = git(path, "rev-parse", "--absolute-git-dir").strip()
     rid = _repo_id(path)
     name = os.path.basename(path.rstrip("/"))
     if name.endswith(".git"):
         name = name[:-4]
-    if remote:
-        name = re.sub(r"\.git$", "", remote.rstrip("/").split("/")[-1].split(":")[-1])
     with _lock:
         info = _repos.get(rid, {})
-        info.update({"id": rid, "path": path, "name": name, "remote": remote,
-                     "source": source, "opened": time.time()})
+        info.update({"id": rid, "path": path, "name": name, "source": source, "opened": time.time()})
         _repos[rid] = info
         _save_recent()
     return info
@@ -675,16 +657,9 @@ def api_forget(body):
 
 def api_refresh(body):
     rid = body.get("repo")
-    repo = get_repo(rid)
-    info = _repos[rid]
-    fetched = False
-    if info.get("remote"):
-        if OFFLINE:
-            raise ApiError("Offline mode: fetching is disabled")
-        git(repo, "fetch", "--prune", "--tags", "origin", "+refs/heads/*:refs/heads/*", timeout=1800)
-        fetched = True
+    get_repo(rid)
     clear_cache(rid)
-    return {"ok": True, "fetched": fetched}
+    return {"ok": True}
 
 
 def api_suggest(q):
@@ -720,7 +695,7 @@ def api_suggest(q):
 
 
 def api_config(_q):
-    return {"offline": OFFLINE, "version": "1.0.0"}
+    return {"version": "1.1.0"}
 
 
 GET_ROUTES = {
@@ -841,9 +816,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, data, STATIC_TYPES.get(ext, "application/octet-stream"))
 
 
-def serve(host="127.0.0.1", port=7777, initial=None, open_browser=True, offline=False):
-    global OFFLINE
-    OFFLINE = offline
+def serve(host="127.0.0.1", port=7777, initial=None, open_browser=True):
     _load_recent()
     httpd = None
     for p in range(port, port + 20):

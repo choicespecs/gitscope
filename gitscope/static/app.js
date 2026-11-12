@@ -185,7 +185,7 @@
   function setupRepoChrome() {
     $("#repoCtx").hidden = false;
     $("#repoName").textContent = S.repo.name;
-    $("#repoName").title = S.repo.path + (S.repo.remote ? "\n" + S.repo.remote : "");
+    $("#repoName").title = S.repo.path;
     $$("#tabs a").forEach((a) => (a.href = link(a.dataset.view, {})));
     const sel = $("#refSelect");
     const R = S.refs;
@@ -207,7 +207,7 @@
     const rb = $("#refreshBtn");
     rb.hidden = false;
     rb.onclick = async () => {
-      rb.disabled = true; toast(S.repo.remote ? "Fetching from remote…" : "Reloading…");
+      rb.disabled = true; toast("Reloading…");
       try {
         await post("refresh", { repo: S.repoId });
         S.refs = await api("refs", { repo: S.repoId });
@@ -224,20 +224,16 @@
   // ------------------------------------------------------------------ home
   async function renderHome() {
     const app = $("#app");
-    let cfg = { offline: false };
-    try { cfg = await api("config"); } catch (e) {}
     app.innerHTML = `
       <div class="home">
         <h1>Trace your git history</h1>
-        <p class="lead">Open a local repository${cfg.offline ? "" : " or paste a git URL"} to browse its commit graph, who changed what and when, and every diff — entirely on this machine.</p>
+        <p class="lead">Open a git repository on this machine to browse its commit graph, who changed what and when, and every diff — entirely on this machine.</p>
         <form class="open-box" id="openForm" autocomplete="off">
-          <input id="src" placeholder="${cfg.offline ? "~/path/to/repo" : "~/path/to/repo  or  https://github.com/user/repo.git"}" spellcheck="false" autofocus>
+          <input id="src" placeholder="~/path/to/repo" spellcheck="false" autofocus>
           <button class="primary">Open</button>
           <div class="suggest" id="sug" hidden></div>
         </form>
-        <div class="hint">${cfg.offline
-          ? "Offline mode: remote URLs are disabled — nothing leaves this machine."
-          : "Local paths are read directly. URLs are cloned once with your own <code>git</code> (no APIs are called) into <code>~/.gitscope/clones</code>; start with <code>--offline</code> to forbid that."}
+        <div class="hint">Repositories are read straight from disk; nothing is cloned, fetched, or sent anywhere.
           Press <kbd>Tab</kbd> to autocomplete folders.</div>
         <div class="recent" id="recent"></div>
       </div>`;
@@ -245,8 +241,7 @@
     let items = [], hi = -1, sugTimer;
     async function suggest() {
       const v = input.value;
-      if (/^(https?:|git@|ssh:|git:)/.test(v)) { sug.hidden = true; return; }
-      try { items = (await api("suggest", { prefix: v || "~/" })).items; } catch (e) { items = []; }
+            try { items = (await api("suggest", { prefix: v || "~/" })).items; } catch (e) { items = []; }
       hi = -1;
       sug.innerHTML = items.map((it, i) => `<div data-i="${i}">${esc(it.path)}${it.git ? '<span class="tag">git</span>' : ""}</div>`).join("");
       sug.hidden = !items.length || document.activeElement !== input;
@@ -277,8 +272,7 @@
     $("#openForm").onsubmit = async (e) => {
       e.preventDefault();
       const btn = $("#openForm button");
-      const isUrl = /^(https?:|git@|ssh:|git:)/.test(input.value.trim());
-      btn.disabled = true; btn.textContent = isUrl ? "Cloning…" : "Opening…";
+      btn.disabled = true; btn.textContent = "Opening…";
       try {
         const info = await post("open", { source: input.value });
         location.hash = `#/r/${info.id}/history`;
@@ -293,8 +287,8 @@
         $("#recent").innerHTML = `<h2>Recent</h2>` + rec.repos.map((r) => `
           <div class="recent-item" data-id="${esc(r.id)}">
             <div class="grow">
-              <div class="nm">${esc(r.name)} ${r.remote ? '<span class="badge">cloned</span>' : ""} ${r.exists ? "" : '<span class="badge">missing</span>'}</div>
-              <div class="pth">${esc(r.remote || r.path)}</div>
+              <div class="nm">${esc(r.name)} ${r.exists ? "" : '<span class="badge">missing</span>'}</div>
+              <div class="pth">${esc(r.path)}</div>
             </div>
             <span class="faint">${rel(r.opened)}</span>
             <button class="x" title="Remove from list" data-forget="${esc(r.id)}">×</button>
@@ -305,7 +299,7 @@
           const it = e.target.closest(".recent-item");
           if (it) {
             const r = rec.repos.find((x) => x.id === it.dataset.id);
-            try { const info = await post("open", { source: r.remote || r.path }); location.hash = `#/r/${info.id}/history`; }
+            try { const info = await post("open", { source: r.path }); location.hash = `#/r/${info.id}/history`; }
             catch (err) { toast(err.message); }
           }
         };
